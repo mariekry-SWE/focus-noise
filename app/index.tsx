@@ -4,9 +4,11 @@ import { useRouter } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  AppState,
   Alert,
   Linking,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -14,6 +16,7 @@ import {
   useColorScheme,
   View,
 } from "react-native";
+import Purchases from "react-native-purchases";
 import { NOISE_CATEGORIES, type NoiseSound } from "@/data/sounds";
 import { useRevenueCat } from "@/hooks/useRevenueCat";
 
@@ -61,6 +64,17 @@ export default function Index() {
     setSettingsModalVisible(false);
     setActiveTrackIndexInCategory(null);
     void unloadCurrentSound();
+  }, []);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state !== "active") return;
+      setSettingsModalVisible(false);
+      setSessionEndModalVisible(false);
+      handleClosePlayer();
+      setErrorMessage(null);
+    });
+    return () => sub.remove();
   }, []);
 
   function clearSessionTimer() {
@@ -179,6 +193,44 @@ export default function Index() {
 
   function toggleCategory(categoryId: string) {
     setOpenCategoryId((prev) => (prev === categoryId ? null : categoryId));
+  }
+
+  async function handleManageSubscription() {
+    try {
+      const iosFallbackUrl = "https://apps.apple.com/account/subscriptions";
+      const androidUrl = "https://play.google.com/store/account/subscriptions";
+
+      if (Platform.OS === "ios") {
+        const maybeShowManage = (Purchases as unknown as { showManageSubscriptions?: () => Promise<void> })
+          .showManageSubscriptions;
+
+        if (typeof maybeShowManage === "function") {
+          await maybeShowManage();
+          return;
+        }
+
+        const canOpen = await Linking.canOpenURL(iosFallbackUrl);
+        if (!canOpen) {
+          Alert.alert(
+            "Kan inte öppna abonnemang",
+            "Det här funkar ibland inte i Simulator. Testa på en fysisk iPhone.",
+          );
+          return;
+        }
+        await Linking.openURL(iosFallbackUrl);
+        return;
+      }
+
+      const canOpen = await Linking.canOpenURL(androidUrl);
+      if (!canOpen) {
+        Alert.alert("Kan inte öppna abonnemang", "Försök igen om en stund.");
+        return;
+      }
+      await Linking.openURL(androidUrl);
+    } catch (error: unknown) {
+      console.warn("[ManageSubscription] error", error);
+      Alert.alert("Kunde inte öppna abonnemang", "Försök igen om en stund.");
+    }
   }
 
   const hasActiveSound =
@@ -518,7 +570,7 @@ export default function Index() {
                 <Pressable
                   onPress={() => {
                     setSettingsModalVisible(false);
-                    router.push("/paywall");
+                    void handleManageSubscription();
                   }}
                   style={({ pressed }) => [
                     styles.settingsOptionRow,
@@ -528,16 +580,42 @@ export default function Index() {
                 >
                   <View style={styles.settingsOptionTextWrap}>
                     <Text style={[styles.settingsOptionTitle, { color: colors.text }]}>
-                      Hantera ditt unlimited-konto
+                      Hantera abonnemang
                     </Text>
                     <Text
                       style={[styles.settingsOptionSubtitle, { color: colors.mutedText }]}
                     >
-                      Oppna RevenueCat for att hantera och aterstalla kop.
+                      Öppna App Store/Google Play för att säga upp eller ändra abonnemang.
                     </Text>
                   </View>
                   <Ionicons name="chevron-forward" size={20} color={colors.mutedText} />
                 </Pressable>
+
+                {!isPro ? (
+                  <Pressable
+                    onPress={() => {
+                      setSettingsModalVisible(false);
+                      router.push("/paywall");
+                    }}
+                    style={({ pressed }) => [
+                      styles.settingsOptionRow,
+                      { borderColor: colors.border },
+                      pressed && { opacity: 0.9 },
+                    ]}
+                  >
+                    <View style={styles.settingsOptionTextWrap}>
+                      <Text style={[styles.settingsOptionTitle, { color: colors.text }]}>
+                        Uppgradera till Unlimited
+                      </Text>
+                      <Text
+                        style={[styles.settingsOptionSubtitle, { color: colors.mutedText }]}
+                      >
+                        Se premiumalternativ och återställ köp.
+                      </Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={20} color={colors.mutedText} />
+                  </Pressable>
+                ) : null}
 
                 <Pressable
                   onPress={async () => {
