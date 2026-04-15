@@ -1,4 +1,4 @@
-import type { AVPlaybackSource } from "expo-av";
+import type { AudioSource } from "expo-audio";
 
 /**
  * Ett enskilt ljud (t.ex. White noise). Kan ha olika loop-gränser för freemium vs premium senare.
@@ -12,7 +12,7 @@ export type NoiseSound = {
    * Ljudfil. Om undefined visas posten men går inte att spela (tills du lagt till filen).
    * Exempel: require("../assets/audio/white.mp3") eller { uri: "https://..." }
    */
-  audioSource?: AVPlaybackSource;
+  audioSource?: AudioSource;
   /** Ska ljudet loopa? (Nu: alltid true. Senare: freemium kan ha begränsat antal loopar.) */
   isLooping: boolean;
 };

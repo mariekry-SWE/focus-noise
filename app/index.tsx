@@ -1,4 +1,8 @@
-import { Audio } from "expo-av";
+import {
+  setAudioModeAsync,
+  useAudioPlayer,
+  useAudioPlayerStatus,
+} from "expo-audio";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -41,14 +45,15 @@ export default function Index() {
   const [openCategoryId, setOpenCategoryId] = useState<string | null>(null);
   const [playingSoundId, setPlayingSoundId] = useState<string | null>(null);
   const [activeSound, setActiveSound] = useState<NoiseSound | null>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [sessionEndModalVisible, setSessionEndModalVisible] = useState(false);
   const [settingsModalVisible, setSettingsModalVisible] = useState(false);
   const [activeTrackIndexInCategory, setActiveTrackIndexInCategory] = useState<number | null>(null);
 
-  const soundRef = useRef<Audio.Sound | null>(null);
+  const audioPlayer = useAudioPlayer(null, { downloadFirst: true });
+  const playbackStatus = useAudioPlayerStatus(audioPlayer);
+  const isPlaying = playingSoundId != null && playbackStatus.playing;
   const sessionLimitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // If a reload/fast refresh leaves an overlay "stuck", it can block all touches.
@@ -57,7 +62,6 @@ export default function Index() {
     setOpenCategoryId(null);
     setPlayingSoundId(null);
     setActiveSound(null);
-    setIsPlaying(false);
     setIsLoading(false);
     setErrorMessage(null);
     setSessionEndModalVisible(false);
@@ -85,25 +89,24 @@ export default function Index() {
   }
 
   useEffect(() => {
-    void Audio.setAudioModeAsync({
-      playsInSilentModeIOS: true,
-      allowsRecordingIOS: false,
-      shouldDuckAndroid: true,
-      playThroughEarpieceAndroid: false,
-      staysActiveInBackground: true,
+    void setAudioModeAsync({
+      playsInSilentMode: true,
+      allowsRecording: false,
+      shouldPlayInBackground: true,
+      interruptionMode: "duckOthers",
+      shouldRouteThroughEarpiece: false,
     });
 
     return () => {
       void unloadCurrentSound();
     };
-  }, []);
+  }, [audioPlayer]);
 
   async function unloadCurrentSound() {
-    const current = soundRef.current;
-    soundRef.current = null;
-    if (!current) return;
     try {
-      await current.unloadAsync();
+      audioPlayer.pause();
+      await audioPlayer.seekTo(0);
+      audioPlayer.replace(null);
     } catch {
       // Ignore unload errors
     }
@@ -126,27 +129,23 @@ export default function Index() {
     clearSessionTimer();
 
     try {
-      if (playingSoundId === sound.id && soundRef.current) {
+      if (playingSoundId === sound.id) {
         if (isPlaying) {
-          await soundRef.current.pauseAsync();
+          audioPlayer.pause();
         } else {
-          await soundRef.current.playAsync();
+          audioPlayer.play();
         }
-        setIsPlaying(!isPlaying);
         setIsLoading(false);
         return;
       }
 
       await unloadCurrentSound();
 
-      const { sound: soundObj } = await Audio.Sound.createAsync(sound.audioSource, {
-        shouldPlay: true,
-        isLooping: sound.isLooping,
-      });
-
-      soundRef.current = soundObj;
+      audioPlayer.replace(sound.audioSource);
+      audioPlayer.loop = sound.isLooping;
+      await audioPlayer.seekTo(0);
+      audioPlayer.play();
       setPlayingSoundId(sound.id);
-      setIsPlaying(true);
 
       // Designkrav:
       // - Första spåret i varje kategori körs alltid max 30 min.
@@ -160,22 +159,14 @@ export default function Index() {
         await unloadCurrentSound();
         setPlayingSoundId(null);
         setActiveSound(null);
-        setIsPlaying(false);
         // Om första spåret slutar: visa session-end-modalen bara för gratis (pro har fortfarande 30 min).
         // Övriga spår har alltid 8h när de är spelbara.
         if (!isPro && isFirstTrack) setSessionEndModalVisible(true);
       }, limitMs);
-
-      soundObj.setOnPlaybackStatusUpdate((status) => {
-        if (status.isLoaded) {
-          setIsPlaying(status.isPlaying);
-        }
-      });
     } catch {
       setErrorMessage("Kunde inte spela upp ljudet. Kontrollera ljudkällan.");
       setPlayingSoundId(null);
       setActiveSound(null);
-      setIsPlaying(false);
       void unloadCurrentSound();
     } finally {
       setIsLoading(false);
@@ -187,7 +178,6 @@ export default function Index() {
     setActiveSound(null);
     setActiveTrackIndexInCategory(null);
     setPlayingSoundId(null);
-    setIsPlaying(false);
     void unloadCurrentSound();
   }
 
