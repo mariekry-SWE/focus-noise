@@ -7,10 +7,13 @@
     "icon": "./assets/images/icon.png",
     "scheme": "focusnoise",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.anonymous.focusnoise"
+      "bundleIdentifier": "com.anonymous.focusnoise",
+      "infoPlist": {
+        "UIBackgroundModes": ["audio"]
+      }
     },
     "android": {
       "adaptiveIcon": {

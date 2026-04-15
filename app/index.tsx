@@ -1,7 +1,7 @@
-import { Audio } from "expo-av";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
+import TrackPlayer, { RepeatMode, State, usePlaybackState } from "react-native-track-player";
 import {
   ActivityIndicator,
   AppState,
@@ -41,14 +41,15 @@ export default function Index() {
   const [openCategoryId, setOpenCategoryId] = useState<string | null>(null);
   const [playingSoundId, setPlayingSoundId] = useState<string | null>(null);
   const [activeSound, setActiveSound] = useState<NoiseSound | null>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [sessionEndModalVisible, setSessionEndModalVisible] = useState(false);
   const [settingsModalVisible, setSettingsModalVisible] = useState(false);
   const [activeTrackIndexInCategory, setActiveTrackIndexInCategory] = useState<number | null>(null);
+  const [trackPlayerReady, setTrackPlayerReady] = useState(false);
+  const playbackState = usePlaybackState();
+  const isPlaying = playingSoundId != null && playbackState.state === State.Playing;
 
-  const soundRef = useRef<Audio.Sound | null>(null);
   const sessionLimitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // If a reload/fast refresh leaves an overlay "stuck", it can block all touches.
@@ -57,7 +58,6 @@ export default function Index() {
     setOpenCategoryId(null);
     setPlayingSoundId(null);
     setActiveSound(null);
-    setIsPlaying(false);
     setIsLoading(false);
     setErrorMessage(null);
     setSessionEndModalVisible(false);
@@ -71,7 +71,11 @@ export default function Index() {
       if (state !== "active") return;
       setSettingsModalVisible(false);
       setSessionEndModalVisible(false);
-      handleClosePlayer();
+      clearSessionTimer();
+      setActiveSound(null);
+      setActiveTrackIndexInCategory(null);
+      setPlayingSoundId(null);
+      void unloadCurrentSound();
       setErrorMessage(null);
     });
     return () => sub.remove();
@@ -85,25 +89,35 @@ export default function Index() {
   }
 
   useEffect(() => {
-    void Audio.setAudioModeAsync({
-      playsInSilentModeIOS: true,
-      allowsRecordingIOS: false,
-      shouldDuckAndroid: true,
-      playThroughEarpieceAndroid: false,
-      staysActiveInBackground: true,
-    });
+    let mounted = true;
+    void (async () => {
+      try {
+        await TrackPlayer.setupPlayer({
+          autoHandleInterruptions: true,
+          iosCategory: "playback",
+          iosCategoryMode: "default",
+          iosCategoryOptions: ["mixWithOthers"],
+        });
+        if (mounted) setTrackPlayerReady(true);
+      } catch (error: unknown) {
+        console.warn("[TrackPlayer setup] error", error);
+        if (mounted) {
+          setErrorMessage("Kunde inte starta ljudspelaren.");
+        }
+      }
+    })();
 
     return () => {
+      mounted = false;
       void unloadCurrentSound();
     };
   }, []);
 
   async function unloadCurrentSound() {
-    const current = soundRef.current;
-    soundRef.current = null;
-    if (!current) return;
     try {
-      await current.unloadAsync();
+      await TrackPlayer.pause();
+      await TrackPlayer.seekTo(0);
+      await TrackPlayer.reset();
     } catch {
       // Ignore unload errors
     }
@@ -111,6 +125,11 @@ export default function Index() {
 
   async function toggleSound(sound: NoiseSound, trackIndexInCategory: number) {
     setErrorMessage(null);
+
+    if (!trackPlayerReady) {
+      setErrorMessage("Ljudspelaren startar fortfarande. Försök igen om en sekund.");
+      return;
+    }
 
     if (!sound.audioSource) {
       setErrorMessage("Ingen ljudfil kopplad än. Lägg filer i assets/audio och uppdatera data/sounds.ts.");
@@ -126,27 +145,29 @@ export default function Index() {
     clearSessionTimer();
 
     try {
-      if (playingSoundId === sound.id && soundRef.current) {
-        if (isPlaying) {
-          await soundRef.current.pauseAsync();
+      if (playingSoundId === sound.id) {
+        if (playbackState.state === State.Playing) {
+          await TrackPlayer.pause();
         } else {
-          await soundRef.current.playAsync();
+          await TrackPlayer.play();
         }
-        setIsPlaying(!isPlaying);
         setIsLoading(false);
         return;
       }
 
       await unloadCurrentSound();
 
-      const { sound: soundObj } = await Audio.Sound.createAsync(sound.audioSource, {
-        shouldPlay: true,
-        isLooping: sound.isLooping,
+      await TrackPlayer.add({
+        id: sound.id,
+        title: sound.title,
+        url: sound.audioSource,
       });
+      await TrackPlayer.setRepeatMode(
+        sound.isLooping ? RepeatMode.Track : RepeatMode.Off,
+      );
+      await TrackPlayer.play();
 
-      soundRef.current = soundObj;
       setPlayingSoundId(sound.id);
-      setIsPlaying(true);
 
       // Designkrav:
       // - Första spåret i varje kategori körs alltid max 30 min.
@@ -160,22 +181,14 @@ export default function Index() {
         await unloadCurrentSound();
         setPlayingSoundId(null);
         setActiveSound(null);
-        setIsPlaying(false);
         // Om första spåret slutar: visa session-end-modalen bara för gratis (pro har fortfarande 30 min).
         // Övriga spår har alltid 8h när de är spelbara.
         if (!isPro && isFirstTrack) setSessionEndModalVisible(true);
       }, limitMs);
-
-      soundObj.setOnPlaybackStatusUpdate((status) => {
-        if (status.isLoaded) {
-          setIsPlaying(status.isPlaying);
-        }
-      });
     } catch {
       setErrorMessage("Kunde inte spela upp ljudet. Kontrollera ljudkällan.");
       setPlayingSoundId(null);
       setActiveSound(null);
-      setIsPlaying(false);
       void unloadCurrentSound();
     } finally {
       setIsLoading(false);
@@ -187,7 +200,6 @@ export default function Index() {
     setActiveSound(null);
     setActiveTrackIndexInCategory(null);
     setPlayingSoundId(null);
-    setIsPlaying(false);
     void unloadCurrentSound();
   }
 

@@ -1,4 +1,4 @@
-import type { AVPlaybackSource } from "expo-av";
+type LocalAudioSource = number | string;
 
 /**
  * Ett enskilt ljud (t.ex. White noise). Kan ha olika loop-gränser för freemium vs premium senare.
@@ -10,9 +10,9 @@ export type NoiseSound = {
   description?: string;
   /**
    * Ljudfil. Om undefined visas posten men går inte att spela (tills du lagt till filen).
-   * Exempel: require("../assets/audio/white.mp3") eller { uri: "https://..." }
+   * Exempel: require("../assets/audio/white.mp3") eller { uri: "https://..." } (expo-audio AudioSource)
    */
-  audioSource?: AVPlaybackSource;
+  audioSource?: LocalAudioSource;
   /** Ska ljudet loopa? (Nu: alltid true. Senare: freemium kan ha begränsat antal loopar.) */
   isLooping: boolean;
 };
@@ -81,14 +81,14 @@ export const NOISE_CATEGORIES: NoiseCategory[] = [
     sounds: [
       {
         id: "brown-1",
-        title: "Brown noise",
-        audioSource: require("../assets/audio/brown-stereo-loopable-5min.mp3"),
+        title: "Brown noise WAV",
+        audioSource: require("../assets/audio/brown-stereo-loopable-90sek.wav"),
         isLooping: true,
       },
       {
         id: "brown-2",
-        title: "Brown noise Deep Sleep",
-        audioSource: require("../assets/audio/brown-stereo-loopable-5min.mp3"),
+        title: "Brown noise mp3",
+        audioSource: require("../assets/audio/brown-stereo-loopable-90sek.mp3"),
         isLooping: true,
       },
     ],
