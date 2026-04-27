@@ -275,7 +275,6 @@ export default function Index() {
   const hasActiveSound =
     activeSound != null && playingSoundId === activeSound.id && isPlaying;
   const isActiveLoading = isLoading && !!activeSound;
-  const [debugTapCount, setDebugTapCount] = useState(0);
   const activeOverlay: "settings" | "sessionEnd" | "player" | null =
     settingsModalVisible
       ? "settings"
@@ -737,16 +736,6 @@ export default function Index() {
         </Modal>
       ) : null}
 
-      <Pressable
-        onPress={() => setDebugTapCount((c) => c + 1)}
-        style={({ pressed }) => [
-          styles.debugButton,
-          pressed && { opacity: 0.85 },
-          { zIndex: 100000 },
-        ]}
-      >
-        <Text style={styles.debugButtonText}>DEBUG: {debugTapCount}</Text>
-      </Pressable>
     </View>
   );
 }
@@ -754,24 +743,6 @@ export default function Index() {
 const styles = StyleSheet.create({
   screenRoot: {
     flex: 1,
-  },
-  debugButton: {
-    position: "absolute",
-    top: 40,
-    left: 12,
-    zIndex: 1000,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 10,
-    backgroundColor: "rgba(255, 196, 0, 0.95)",
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "#111827",
-    pointerEvents: "auto",
-  },
-  debugButtonText: {
-    color: "#111827",
-    fontWeight: "700",
-    fontSize: 12,
   },
   scrollRoot: {
     flex: 1,
