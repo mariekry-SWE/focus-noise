@@ -41,3 +41,8 @@ app-example
 # generated native folders
 /ios
 /android
+
+# local backups and Finder metadata
+backups/
+assets/audio/.Media Preferences.plist
+assets/audio/Automatically Add to Music.localized/

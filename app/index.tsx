@@ -1,11 +1,6 @@
-import {
-  setAudioModeAsync,
-  useAudioPlayer,
-  useAudioPlayerStatus,
-} from "expo-audio";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   AppState,
@@ -23,17 +18,39 @@ import {
 import Purchases from "react-native-purchases";
 import { NOISE_CATEGORIES, type NoiseSound } from "@/data/sounds";
 import { useRevenueCat } from "@/hooks/useRevenueCat";
+import { playNoise, setNoiseVolume, stopNoise } from "@/lib/noiseGenerator";
 
-const FREE_SESSION_MINUTES = 30; // Sätt t.ex. till 0.5 för snabb test av session-end-modalen
+const FREE_SESSION_MINUTES = 30;
 const PREMIUM_SESSION_HOURS = 8;
+
+// Toggle this in development for faster timer QA.
+const DEBUG_QUICK_SESSION_TIMERS = __DEV__ && true;
+const DEBUG_FREE_SESSION_SECONDS = 20;
+const DEBUG_PREMIUM_SESSION_SECONDS = 45;
+
+const EFFECTIVE_FREE_SESSION_MS = DEBUG_QUICK_SESSION_TIMERS
+  ? DEBUG_FREE_SESSION_SECONDS * 1000
+  : FREE_SESSION_MINUTES * 60 * 1000;
+
+const EFFECTIVE_PREMIUM_SESSION_MS = DEBUG_QUICK_SESSION_TIMERS
+  ? DEBUG_PREMIUM_SESSION_SECONDS * 1000
+  : PREMIUM_SESSION_HOURS * 60 * 60 * 1000;
+
+const FREE_SESSION_LABEL = DEBUG_QUICK_SESSION_TIMERS
+  ? `${DEBUG_FREE_SESSION_SECONDS}s`
+  : `${FREE_SESSION_MINUTES} min`;
+
+const PREMIUM_SESSION_LABEL = DEBUG_QUICK_SESSION_TIMERS
+  ? `${DEBUG_PREMIUM_SESSION_SECONDS}s`
+  : `${PREMIUM_SESSION_HOURS}h`;
 
 function playbackSessionLabel(opts: {
   isPremium: boolean;
   isFirstTrackInCategory: boolean;
 }): string {
-  if (opts.isFirstTrackInCategory) return `${FREE_SESSION_MINUTES} min`;
-  if (opts.isPremium) return `${PREMIUM_SESSION_HOURS}h`;
-  return `${FREE_SESSION_MINUTES} min`;
+  if (opts.isFirstTrackInCategory) return FREE_SESSION_LABEL;
+  if (opts.isPremium) return PREMIUM_SESSION_LABEL;
+  return FREE_SESSION_LABEL;
 }
 
 export default function Index() {
@@ -45,80 +62,72 @@ export default function Index() {
   const [openCategoryId, setOpenCategoryId] = useState<string | null>(null);
   const [playingSoundId, setPlayingSoundId] = useState<string | null>(null);
   const [activeSound, setActiveSound] = useState<NoiseSound | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [sessionEndModalVisible, setSessionEndModalVisible] = useState(false);
   const [settingsModalVisible, setSettingsModalVisible] = useState(false);
   const [activeTrackIndexInCategory, setActiveTrackIndexInCategory] = useState<number | null>(null);
 
-  const audioPlayer = useAudioPlayer(null, { downloadFirst: true });
-  const playbackStatus = useAudioPlayerStatus(audioPlayer);
-  const isPlaying = playingSoundId != null && playbackStatus.playing;
-  const sessionLimitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Wall-clock session end; checked periodically so limits hold even when JS timers are throttled in background. */
+  const sessionEndsAtRef = useRef<number | null>(null);
+  const sessionFirstTrackRef = useRef(false);
+  const sessionCheckIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // If a reload/fast refresh leaves an overlay "stuck", it can block all touches.
   // This mount reset keeps the screen in a deterministic, touchable state.
-  useEffect(() => {
-    setOpenCategoryId(null);
-    setPlayingSoundId(null);
-    setActiveSound(null);
-    setIsLoading(false);
-    setErrorMessage(null);
-    setSessionEndModalVisible(false);
-    setSettingsModalVisible(false);
-    setActiveTrackIndexInCategory(null);
-    void unloadCurrentSound();
-  }, []);
-
-  useEffect(() => {
-    const sub = AppState.addEventListener("change", (state) => {
-      if (state !== "active") return;
-      setSettingsModalVisible(false);
-      setSessionEndModalVisible(false);
-      handleClosePlayer();
-      setErrorMessage(null);
-    });
-    return () => sub.remove();
-  }, []);
-
-  function clearSessionTimer() {
-    if (sessionLimitTimerRef.current != null) {
-      clearTimeout(sessionLimitTimerRef.current);
-      sessionLimitTimerRef.current = null;
+  function clearSessionWatch() {
+    sessionEndsAtRef.current = null;
+    sessionFirstTrackRef.current = false;
+    if (sessionCheckIntervalRef.current != null) {
+      clearInterval(sessionCheckIntervalRef.current);
+      sessionCheckIntervalRef.current = null;
     }
   }
 
-  useEffect(() => {
-    void setAudioModeAsync({
-      playsInSilentMode: true,
-      allowsRecording: false,
-      shouldPlayInBackground: true,
-      interruptionMode: "duckOthers",
-      shouldRouteThroughEarpiece: false,
-    });
-
-    return () => {
-      void unloadCurrentSound();
-    };
-  }, [audioPlayer]);
-
-  async function unloadCurrentSound() {
+  const unloadCurrentSound = useCallback(async () => {
     try {
-      audioPlayer.pause();
-      await audioPlayer.seekTo(0);
-      audioPlayer.replace(null);
+      clearSessionWatch();
+      await stopNoise();
     } catch {
       // Ignore unload errors
     }
+  }, []);
+
+  const endSessionByLimit = useCallback(async () => {
+    const wasFirstTrack = sessionFirstTrackRef.current;
+    clearSessionWatch();
+    try {
+      await stopNoise();
+    } catch {
+      // ignore
+    }
+    setPlayingSoundId(null);
+    setActiveSound(null);
+    setIsPlaying(false);
+    if (!isPro && wasFirstTrack) setSessionEndModalVisible(true);
+  }, [isPro]);
+
+  function startPlaybackTimers(isFirstTrack: boolean) {
+    clearSessionWatch();
+
+    const limitMs = isFirstTrack
+      ? EFFECTIVE_FREE_SESSION_MS
+      : EFFECTIVE_PREMIUM_SESSION_MS;
+
+    sessionEndsAtRef.current = Date.now() + limitMs;
+    sessionFirstTrackRef.current = isFirstTrack;
+
+    sessionCheckIntervalRef.current = setInterval(() => {
+      const endAt = sessionEndsAtRef.current;
+      if (endAt == null) return;
+      if (Date.now() < endAt) return;
+      void endSessionByLimit();
+    }, 15_000);
   }
 
   async function toggleSound(sound: NoiseSound, trackIndexInCategory: number) {
     setErrorMessage(null);
-
-    if (!sound.audioSource) {
-      setErrorMessage("Ingen ljudfil kopplad än. Lägg filer i assets/audio och uppdatera data/sounds.ts.");
-      return;
-    }
 
     const isFirstTrack = trackIndexInCategory === 0;
     const canPlayFree = isFirstTrack && !isPro;
@@ -126,14 +135,18 @@ export default function Index() {
     if (!canPlayFree && !canPlayPremium) return; // Låst spår (premium-only för gratis-användare)
 
     setIsLoading(true);
-    clearSessionTimer();
+    clearSessionWatch();
 
     try {
       if (playingSoundId === sound.id) {
         if (isPlaying) {
-          audioPlayer.pause();
+          await stopNoise();
+          clearSessionWatch();
+          setIsPlaying(false);
         } else {
-          audioPlayer.play();
+          await playNoise(sound.noiseType);
+          startPlaybackTimers(isFirstTrack);
+          setIsPlaying(true);
         }
         setIsLoading(false);
         return;
@@ -141,48 +154,84 @@ export default function Index() {
 
       await unloadCurrentSound();
 
-      audioPlayer.replace(sound.audioSource);
-      audioPlayer.loop = sound.isLooping;
-      await audioPlayer.seekTo(0);
-      audioPlayer.play();
+      await playNoise(sound.noiseType);
       setPlayingSoundId(sound.id);
-
-      // Designkrav:
-      // - Första spåret i varje kategori körs alltid max 30 min.
-      // - Övriga spår körs max 8h efter pro-köp.
-      const limitMs = isFirstTrack
-        ? FREE_SESSION_MINUTES * 60 * 1000
-        : PREMIUM_SESSION_HOURS * 60 * 60 * 1000;
-
-      sessionLimitTimerRef.current = setTimeout(async () => {
-        sessionLimitTimerRef.current = null;
-        await unloadCurrentSound();
-        setPlayingSoundId(null);
-        setActiveSound(null);
-        // Om första spåret slutar: visa session-end-modalen bara för gratis (pro har fortfarande 30 min).
-        // Övriga spår har alltid 8h när de är spelbara.
-        if (!isPro && isFirstTrack) setSessionEndModalVisible(true);
-      }, limitMs);
+      setIsPlaying(true);
+      startPlaybackTimers(isFirstTrack);
     } catch {
-      setErrorMessage("Kunde inte spela upp ljudet. Kontrollera ljudkällan.");
+      setErrorMessage("Kunde inte starta brusgeneratorn. Bygg om dev client och prova igen.");
       setPlayingSoundId(null);
       setActiveSound(null);
+      setIsPlaying(false);
       void unloadCurrentSound();
     } finally {
       setIsLoading(false);
     }
   }
 
-  function handleClosePlayer() {
-    clearSessionTimer();
+  const handleClosePlayer = useCallback(() => {
     setActiveSound(null);
     setActiveTrackIndexInCategory(null);
     setPlayingSoundId(null);
+    setIsPlaying(false);
     void unloadCurrentSound();
-  }
+  }, [unloadCurrentSound]);
+
+  useEffect(() => {
+    setOpenCategoryId(null);
+    setPlayingSoundId(null);
+    setActiveSound(null);
+    setIsPlaying(false);
+    setIsLoading(false);
+    setErrorMessage(null);
+    setSessionEndModalVisible(false);
+    setSettingsModalVisible(false);
+    setActiveTrackIndexInCategory(null);
+    void unloadCurrentSound();
+  }, [unloadCurrentSound]);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state !== "active") return;
+      setSettingsModalVisible(false);
+      setSessionEndModalVisible(false);
+      setErrorMessage(null);
+      // Re-check session wall clock when returning from background (timers may have been throttled).
+      const endAt = sessionEndsAtRef.current;
+      if (endAt != null && Date.now() >= endAt) {
+        void endSessionByLimit();
+      }
+    });
+    return () => sub.remove();
+  }, [endSessionByLimit]);
+
+  useEffect(() => {
+    void setNoiseVolume(0.22);
+
+    return () => {
+      void unloadCurrentSound();
+    };
+  }, [unloadCurrentSound]);
 
   function toggleCategory(categoryId: string) {
     setOpenCategoryId((prev) => (prev === categoryId ? null : categoryId));
+  }
+
+  function openPaywall() {
+    setSessionEndModalVisible(false);
+    setSettingsModalVisible(false);
+    // Let modal state settle before navigation so push isn't swallowed.
+    requestAnimationFrame(() => {
+      router.push("/paywall");
+    });
+  }
+
+  function openPaywallFromSessionEnd() {
+    setSessionEndModalVisible(false);
+    // Session-end modal can otherwise swallow immediate navigation on some iOS builds.
+    setTimeout(() => {
+      router.replace("/paywall");
+    }, 120);
   }
 
   async function handleManageSubscription() {
@@ -298,10 +347,9 @@ export default function Index() {
                 <View style={styles.tracks}>
                   {category.sounds.map((sound, trackIndex) => {
                     const active = playingSoundId === sound.id;
-                    const hasSource = Boolean(sound.audioSource);
                     const isFirstTrack = trackIndex === 0;
                     const isLocked = !isPro && !isFirstTrack; // Premium-spår för gratis: synliga men ej klickbara
-                    const canPlay = hasSource && !isLocked;
+                    const canPlay = !isLocked;
                     const sessionLabel = playbackSessionLabel({
                       isPremium: isPro,
                       isFirstTrackInCategory: trackIndex === 0,
@@ -309,10 +357,9 @@ export default function Index() {
 
                     function handlePress() {
                       if (isLocked) {
-                        router.push("/paywall");
+                        openPaywall();
                         return;
                       }
-                      if (!canPlay) return;
                       setActiveSound(sound);
                       setActiveTrackIndexInCategory(trackIndex);
                       void toggleSound(sound, trackIndex);
@@ -322,7 +369,7 @@ export default function Index() {
                       <View key={sound.id} style={styles.trackRowWrapper}>
                         <Pressable
                           onPress={handlePress}
-                          disabled={(!canPlay && !isLocked) || isLoading}
+                          disabled={canPlay ? isLoading : false}
                           style={({ pressed }) => [
                             styles.trackRow,
                             { borderColor: colors.border },
@@ -461,7 +508,7 @@ export default function Index() {
                 <View style={styles.playerControls}>
                   <Pressable
                     onPress={() => {
-                      if (!activeSound || isLoading || !activeSound.audioSource || activeTrackIndexInCategory == null) return;
+                      if (!activeSound || isLoading || activeTrackIndexInCategory == null) return;
                       void toggleSound(activeSound, activeTrackIndexInCategory);
                     }}
                     style={({ pressed }) => [
@@ -525,8 +572,7 @@ export default function Index() {
                 <Pressable
                   style={[styles.sessionEndButtonPrimary, { backgroundColor: colors.primary }]}
                   onPress={() => {
-                    setSessionEndModalVisible(false);
-                    router.push("/paywall");
+                    openPaywallFromSessionEnd();
                   }}
                 >
                   <Text style={styles.sessionEndButtonPrimaryText}>
@@ -584,8 +630,7 @@ export default function Index() {
                 {!isPro ? (
                   <Pressable
                     onPress={() => {
-                      setSettingsModalVisible(false);
-                      router.push("/paywall");
+                      openPaywall();
                     }}
                     style={({ pressed }) => [
                       styles.settingsOptionRow,

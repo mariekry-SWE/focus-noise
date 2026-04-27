@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android", "web"],
+  "apple": {
+    "modules": ["FocusNoiseGeneratorModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.focusnoisegenerator.FocusNoiseGeneratorModule"]
+  }
+}
