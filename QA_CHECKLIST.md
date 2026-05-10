@@ -2,6 +2,12 @@
 
 Kör i **dev client** (inte Expo Go). För snabba sessiontester: `USE_SHORT_SESSION_TIMERS_FOR_QA = true` i `app/index.tsx`. För produktionslängder innan release: sätt den till `false` (gäller bara `__DEV__`).
 
+## RevenueCat / miljö
+
+- [ ] Kopiera `.env.example` till `.env` och fyll i `EXPO_PUBLIC_REVENUECAT_IOS_API_KEY` (och Android om ni har separat nyckel). I EAS: sätt samma variabler som secrets / env för build-profilen.
+- [ ] **Release:** verifiera att nycklarna **inte** börjar med `test_` (produktion använder `appl_…` på iOS och `goog_…` på Android enligt RevenueCat).
+- [ ] I Xcode/Android Studio-logg: vid release ska du **inte** se varningen om test-nyckel i release build.
+
 ## Kärnspelning
 
 - [ ] Öppna varje kategori (white / pink / brown), spela första spåret – ljud startar utan fel.
