@@ -23,25 +23,27 @@ import { playNoise, setNoiseVolume, stopNoise } from "@/lib/noiseGenerator";
 const FREE_SESSION_MINUTES = 30;
 const PREMIUM_SESSION_HOURS = 8;
 
-// Toggle this in development for faster timer QA.
-const DEBUG_QUICK_SESSION_TIMERS = __DEV__ && true;
-const DEBUG_FREE_SESSION_SECONDS = 20;
-const DEBUG_PREMIUM_SESSION_SECONDS = 45;
+/** Snabba tider endast för QA i dev-build. Sätt `false` för riktiga 30 min / 8 h. Release-byggen använder alltid produktionslängder. */
+const USE_SHORT_SESSION_TIMERS_FOR_QA = true;
+const QA_FREE_SESSION_SECONDS = 20;
+const QA_PREMIUM_SESSION_SECONDS = 45;
 
-const EFFECTIVE_FREE_SESSION_MS = DEBUG_QUICK_SESSION_TIMERS
-  ? DEBUG_FREE_SESSION_SECONDS * 1000
+const shortSessionsActive = __DEV__ && USE_SHORT_SESSION_TIMERS_FOR_QA;
+
+const EFFECTIVE_FREE_SESSION_MS = shortSessionsActive
+  ? QA_FREE_SESSION_SECONDS * 1000
   : FREE_SESSION_MINUTES * 60 * 1000;
 
-const EFFECTIVE_PREMIUM_SESSION_MS = DEBUG_QUICK_SESSION_TIMERS
-  ? DEBUG_PREMIUM_SESSION_SECONDS * 1000
+const EFFECTIVE_PREMIUM_SESSION_MS = shortSessionsActive
+  ? QA_PREMIUM_SESSION_SECONDS * 1000
   : PREMIUM_SESSION_HOURS * 60 * 60 * 1000;
 
-const FREE_SESSION_LABEL = DEBUG_QUICK_SESSION_TIMERS
-  ? `${DEBUG_FREE_SESSION_SECONDS}s`
+const FREE_SESSION_LABEL = shortSessionsActive
+  ? `${QA_FREE_SESSION_SECONDS}s`
   : `${FREE_SESSION_MINUTES} min`;
 
-const PREMIUM_SESSION_LABEL = DEBUG_QUICK_SESSION_TIMERS
-  ? `${DEBUG_PREMIUM_SESSION_SECONDS}s`
+const PREMIUM_SESSION_LABEL = shortSessionsActive
+  ? `${QA_PREMIUM_SESSION_SECONDS}s`
   : `${PREMIUM_SESSION_HOURS}h`;
 
 function playbackSessionLabel(opts: {
